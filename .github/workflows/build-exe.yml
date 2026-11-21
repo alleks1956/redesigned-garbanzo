@@ -1,17 +1,29 @@
+name: Build APK
+
 on:
+  push:
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - uses: actions/setup-java@v5
         with:
-          python-version: "3.12"
-      - run: pip install pillow pyinstaller
-      - run: pyinstaller --onefile --windowed --name BatchPhotoEditor batch_photo_editor.py
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
       - uses: actions/upload-artifact@v4
         with:
-          name: BatchPhotoEditor
-          path: dist/BatchPhotoEditor.exe
+          name: App-Debug
+          path: app/build/outputs/apk/debug/*.apk
