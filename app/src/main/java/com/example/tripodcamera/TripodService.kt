@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
@@ -25,9 +26,12 @@ class TripodService : Service() {
     private var camera: TripodIntervalCamera? = null
     private val handler = Handler(Looper.getMainLooper())
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    @Volatile private var server: FrameServer? = null
     private var startRunnable: Runnable? = null
     private var endRunnable: Runnable? = null
 
+    @Suppress("DEPRECATION")
     @SuppressLint("WakelockTimeout")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val nm = getSystemService(NotificationManager::class.java)
@@ -41,6 +45,7 @@ class TripodService : Service() {
         val iso = intent?.getIntExtra(MainActivity.EXTRA_ISO, 400) ?: 400
         val startAt = intent?.getLongExtra(MainActivity.EXTRA_START_AT, 0L) ?: 0L
         val endAt = intent?.getLongExtra(MainActivity.EXTRA_END_AT, 0L) ?: 0L
+        val password = intent?.getStringExtra(MainActivity.EXTRA_PASSWORD) ?: ""
 
         // Повторный «Старт»: сбрасываем прежние таймеры и камеру.
         cancelPending()
@@ -51,14 +56,40 @@ class TripodService : Service() {
         val startDelay = (startAt - now).coerceAtLeast(0L)
         val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
 
-        val firstText = if (startDelay > 0L) "Ожидание старта: ${timeFmt.format(Date(startAt))}"
-        else "Интервальная съёмка идёт"
+        // Веб-сервер для просмотра кадров с другого устройства в той же сети.
+        // Без пароля сервер не запускается.
+        if (password.isEmpty()) {
+            server?.stop()
+            server = null
+        } else {
+            val current = server
+            if (current != null) {
+                current.password = password
+            } else {
+                val s = FrameServer(contentResolver, password)
+                if (s.start()) server = s else s.stop()
+            }
+        }
+        val viewText = if (server != null) {
+            FrameServer.localAddress()?.let { " · http://$it:${FrameServer.PORT}" } ?: ""
+        } else ""
+
+        val firstText = if (startDelay > 0L) "Ожидание старта: ${timeFmt.format(Date(startAt))}$viewText"
+        else "Интервальная съёмка идёт$viewText"
         startForeground(1, buildNotification(firstText), ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
 
         // Во время ожидания процессор не должен засыпать, иначе таймер сработает с опозданием.
         if (wakeLock?.isHeld != true) {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "IntervalCamera:service").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+        // Чтобы Wi-Fi не засыпал при погасшем экране и страница оставалась доступной.
+        if (wifiLock?.isHeld != true) {
+            val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "IntervalCamera:wifi").apply {
                 setReferenceCounted(false)
                 acquire()
             }
@@ -75,7 +106,7 @@ class TripodService : Service() {
             }
             val endText = if (endAt > 0L) ", до ${timeFmt.format(Date(endAt))}" else ""
             getSystemService(NotificationManager::class.java)
-                .notify(1, buildNotification("Интервальная съёмка идёт$endText"))
+                .notify(1, buildNotification("Интервальная съёмка идёт$endText$viewText"))
         }
         startRunnable = launch
         if (startDelay > 0L) handler.postDelayed(launch, startDelay) else launch.run()
@@ -97,6 +128,7 @@ class TripodService : Service() {
         Notification.Builder(this, "tripod")
             .setContentTitle("Tripod Camera")
             .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
@@ -122,6 +154,7 @@ class TripodService : Service() {
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
             contentResolver.update(uri, values, null, null)
+            server?.add(name, uri)
         } catch (e: Exception) {
             Log.e("TripodService", "Ошибка сохранения: $e")
         }
@@ -131,11 +164,18 @@ class TripodService : Service() {
         cancelPending()
         camera?.stop()
         camera = null
+        server?.stop()
+        server = null
         try {
             wakeLock?.takeIf { it.isHeld }?.release()
         } catch (_: Exception) {
         }
         wakeLock = null
+        try {
+            wifiLock?.takeIf { it.isHeld }?.release()
+        } catch (_: Exception) {
+        }
+        wifiLock = null
         super.onDestroy()
     }
 

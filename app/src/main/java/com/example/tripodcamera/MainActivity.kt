@@ -26,6 +26,7 @@ class MainActivity : Activity() {
         const val EXTRA_ISO = "iso"
         const val EXTRA_START_AT = "start_at"   // мс с 1970, 0 = сразу
         const val EXTRA_END_AT = "end_at"       // мс с 1970, 0 = до нажатия «Стоп»
+        const val EXTRA_PASSWORD = "password"   // пароль для просмотра по Wi-Fi
     }
 
     private lateinit var intervalInput: EditText
@@ -34,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var isoInput: EditText
     private lateinit var startTimeInput: EditText
     private lateinit var endTimeInput: EditText
+    private lateinit var passwordInput: EditText
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,6 +82,13 @@ class MainActivity : Activity() {
         root.addView(label("Закончить съёмку в (пусто = до нажатия «Стоп»):"))
         endTimeInput = timeField()
         root.addView(endTimeInput)
+
+        root.addView(label("Пароль для просмотра по Wi-Fi (пусто = просмотр выключен):"))
+        passwordInput = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(getSharedPreferences("tripod", MODE_PRIVATE).getString("password", ""))
+        }
+        root.addView(passwordInput)
 
         root.addView(Button(this).apply {
             text = "Старт"
@@ -153,6 +162,8 @@ class MainActivity : Activity() {
         val manual = manualCheck.isChecked
         val denom = shutterInput.text.toString().toIntOrNull()?.coerceIn(1, 8000) ?: 500
         val iso = isoInput.text.toString().toIntOrNull()?.coerceAtLeast(50) ?: 400
+        val password = passwordInput.text.toString()
+        getSharedPreferences("tripod", MODE_PRIVATE).edit().putString("password", password).apply()
 
         val now = System.currentTimeMillis()
         var startAt = 0L
@@ -175,12 +186,19 @@ class MainActivity : Activity() {
                 .putExtra(EXTRA_ISO, iso)
                 .putExtra(EXTRA_START_AT, startAt)
                 .putExtra(EXTRA_END_AT, endAt)
+                .putExtra(EXTRA_PASSWORD, password)
         )
 
         val fmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
         val mode = if (manual) "ручной, 1/$denom с, ISO $iso" else "авто, выдержка не длиннее 1/$denom с"
         val startText = if (startAt > 0L) "старт ${fmt.format(Date(startAt))}" else "старт сразу"
         val endText = if (endAt > 0L) "конец ${fmt.format(Date(endAt))}" else "конец: по кнопке «Стоп»"
-        status.text = "Запущено: $startText, $endText\nИнтервал $interval с\nЭкспозиция: $mode\nФото: Pictures/TripodCamera"
+        val view = when {
+            password.isEmpty() -> "\nПросмотр по Wi-Fi выключен: задайте пароль"
+            else -> FrameServer.localAddress()
+                ?.let { "\nПросмотр: http://$it:${FrameServer.PORT} (пароль из поля выше, имя любое)" }
+                ?: "\nПросмотр: нет Wi-Fi"
+        }
+        status.text = "Запущено: $startText, $endText\nИнтервал $interval с\nЭкспозиция: $mode\nФото: Pictures/TripodCamera$view"
     }
 }
