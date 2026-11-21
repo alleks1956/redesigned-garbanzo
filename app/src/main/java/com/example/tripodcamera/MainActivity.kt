@@ -199,8 +199,6 @@ class MainActivity : Activity() {
                 ?.let { "\nПросмотр: http://$it:${FrameServer.PORT} (пароль из поля выше, имя любое)" }
                 ?: "\nПросмотр: нет Wi-Fi"
         }
-        status.text = "val view = FrameServer.localAddress()
-    ?.let { "\nПросмотр: http://$it:${FrameServer.PORT}" } ?: "\nПросмотр: нет Wi-Fi"
-status.text = "Запущено: $startText, $endText\nИнтервал $interval с\nЭкспозиция: $mode\nФото: Pictures/TripodCamera$view""
+        status.text = "Запущено: $startText, $endText\nИнтервал $interval с\nЭкспозиция: $mode\nФото: Pictures/TripodCamera$view"
     }
 }
